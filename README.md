@@ -45,27 +45,40 @@ technique (Burp + Autorize).
 
 ---
 
-## Setup (Kali on WSL2)
+## Setup on Windows (Kali WSL2) — step by step
 
-Run these **inside your Kali WSL shell**.
+### Step 0 — Open the Kali terminal
+Any one of these:
+- **Start menu** → type **"Kali Linux"** → open it, **or**
+- Open **Windows Terminal** → click the **∨** dropdown → **Kali Linux**, **or**
+- Open **PowerShell** and run: `wsl -d kali-linux`
 
-**1. Get the code** (after you've pushed it to your GitHub):
+You'll land at a Kali shell prompt (`┌──(user㉿…)`).
+
+### Step 1 — Update & ensure git
 ```bash
-git clone https://github.com/<your-username>/bbpipe.git
+sudo apt update
+sudo apt install -y git
+```
+
+### Step 2 — Download the repo
+```bash
+git clone https://github.com/SarthakK337/bbpipe.git
 cd bbpipe
 ```
 
-**2. Python dependency:**
+### Step 3 — Install the Python bits
+Kali blocks plain `pip install` (PEP 668), so install via apt — cleanest:
 ```bash
-pip install -r requirements.txt        # or: pip install pyyaml
+sudo apt install -y python3-yaml python3-flask
 ```
+<sub>(Fallback if you insist on pip: `pip install --break-system-packages -r requirements.txt`)</sub>
 
-**3. Install the security tools** (most ship with Kali; this covers the rest):
+### Step 4 — Install the security tools
 ```bash
-sudo apt update
 sudo apt install -y ffuf gobuster feroxbuster nikto whatweb nuclei wpscan sqlmap commix seclists dirsearch amass
 
-# Go-based tools (subfinder, httpx, gau, katana, dalfox, assetfinder, gowitness, waybackurls, httprobe)
+# Go-based tools (subfinder, httpx, gau, katana, dalfox, gowitness, assetfinder, waybackurls, httprobe)
 sudo apt install -y golang-go
 go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 go install github.com/projectdiscovery/httpx/cmd/httpx@latest
@@ -76,16 +89,22 @@ go install github.com/tomnomnom/assetfinder@latest
 go install github.com/tomnomnom/waybackurls@latest
 go install github.com/tomnomnom/httprobe@latest
 go install github.com/sensepost/gowitness@latest
-
-# make the go tools runnable from anywhere
-echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc && source ~/.bashrc
 ```
 
-**4. Check what's installed:**
+### Step 5 — Make the Go tools findable
+```bash
+echo 'export PATH=$PATH:$HOME/go/bin' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Step 6 — Check what's installed
 ```bash
 python3 bbpipe.py --check
 ```
-Green ✓ = ready, red ✗ = install it (or just [S]kip that step at runtime).
+Green ✓ = ready, red ✗ = install it (or just `[S]`kip that step at runtime).
+
+> **Steps 1–5 are one-time setup.** After that you only need Steps 7–9 (below /
+> in Usage) for each new target.
 
 ---
 
