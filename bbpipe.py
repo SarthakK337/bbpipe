@@ -86,18 +86,21 @@ class Scope:
 # ----------------------------------------------------------------------------
 # Wordlist auto-detection — pick the first list that actually exists on this box
 # ----------------------------------------------------------------------------
+_BUNDLED_WL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wordlists", "common.txt")
+
 WORDLIST_CANDIDATES = [
     "/usr/share/seclists/Discovery/Web-Content/common.txt",
     "/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt",
     "/usr/share/wordlists/dirb/common.txt",
     "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
+    _BUNDLED_WL,  # always shipped with the repo — guaranteed fallback
 ]
 
 def default_wordlist():
     for c in WORDLIST_CANDIDATES:
         if os.path.exists(c):
             return c
-    return WORDLIST_CANDIDATES[0]  # nothing found; report path so the error is clear
+    return _BUNDLED_WL  # last resort (should always exist in the repo)
 
 
 # ----------------------------------------------------------------------------

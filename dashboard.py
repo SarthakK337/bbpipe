@@ -167,7 +167,7 @@ def _exec_shell(cmd, step_id, out_dir):
     try:
         proc = subprocess.Popen(["bash", "-c", f"set -o pipefail; {cmd}"],
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, bufsize=1, env=env)
+                                encoding="utf-8", errors="replace", bufsize=1, env=env)
     except Exception as e:
         runner.log(f"failed to start: {e}", step_id)
         return 1
