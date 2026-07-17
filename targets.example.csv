@@ -1,0 +1,11 @@
+# Copy to targets.csv and list your authorized targets — one per line.
+# A CSV first column also works. Full URLs are auto-trimmed to the domain,
+# so all of these are fine:
+#   example.com
+#   https://app.example.com/login   -> app.example.com
+#   api.example.com:8443/path       -> api.example.com
+#
+#   cp targets.example.csv targets.csv
+example.com
+api.example.com
+app.example.com

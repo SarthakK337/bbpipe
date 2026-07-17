@@ -143,6 +143,33 @@ python3 bbpipe.py --target example.com --full-auto
 
 ---
 
+## Batch mode — many targets in parallel
+
+Have a list of links? `batch.py` runs the pipeline against all of them, N at a time.
+
+```bash
+cp targets.example.csv targets.csv     # then edit: one authorized target per line
+python3 batch.py --targets targets.csv                  # 3 pipelines at a time (default)
+python3 batch.py --targets targets.csv --concurrency 5  # 5 at a time (batches of 5)
+python3 batch.py --targets targets.csv --concurrency 999 # effectively "all at once"
+python3 batch.py --targets targets.csv --dry-run        # show commands, run nothing
+```
+
+- **Input:** one target per line, *or* the first column of a CSV. Full URLs are
+  auto-trimmed to the domain (`https://app.x.com/login` → `app.x.com`).
+- **Scope-checked:** out-of-scope targets are skipped and reported, never run.
+- **Unattended:** no per-step prompts. Dangerous steps run only with `--allow-dangerous`.
+- **Isolated output:** each target writes to its own `output/<target>/` folder;
+  a roll-up lands in `output/batch_summary.csv`.
+
+**How many in parallel?** Start with **3**. Each pipeline already runs
+multi-threaded tools (nuclei, ffuf), so 3–5 concurrent pipelines is usually the
+sweet spot on a laptop/WSL2. Going higher mostly costs you **bandwidth** and risks
+**tripping target rate-limits / WAFs** (over-scanning is how you get IP-blocked) —
+`batch.py` warns you above 5.
+
+---
+
 ## Dashboard (point-and-click control)
 
 Prefer a UI over the CLI? Run the local dashboard:
