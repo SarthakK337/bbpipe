@@ -21,6 +21,7 @@ only — never expose it to a network. Authorized targets only.
 """
 
 import argparse
+import concurrent.futures as cf
 import contextlib
 import io
 import json
@@ -137,6 +138,7 @@ class Runner:
         self.current = None
         self.proc = None
         self.stop_flag = False
+        self.batch = {}            # host -> status (batch runs only)
 
     def log(self, text, step=None):
         with self.lock:
@@ -150,15 +152,19 @@ class Runner:
         with self.lock:
             self.results[step_id] = status
 
+    def set_batch(self, host, status):
+        with self.lock:
+            self.batch[host] = status
+
     def snapshot(self, since):
         with self.lock:
             return {"running": self.running, "current": self.current,
-                    "results": dict(self.results), "total": len(self.lines),
-                    "lines": self.lines[since:]}
+                    "results": dict(self.results), "batch": dict(self.batch),
+                    "total": len(self.lines), "lines": self.lines[since:]}
 
     def reset(self):
         with self.lock:
-            self.lines, self.results, self.stop_flag = [], {}, False
+            self.lines, self.results, self.batch, self.stop_flag = [], {}, {}, False
 
 
 runner = Runner()
@@ -204,12 +210,13 @@ def run_pipeline(cfg, target, step_ids, dry_run, allow_dangerous):
     runner.running = True
     try:
         scope = bbpipe.Scope.load(str(cfg.scope_path))
-        if not scope.is_allowed(target):
-            runner.log(f"REFUSING: {target} is not in scope ({cfg.args.scope}).")
+        host, target_url = bbpipe.parse_target(target)   # honor http/https + path
+        if not scope.is_allowed(host):
+            runner.log(f"REFUSING: {host} is not in scope ({cfg.args.scope}).")
             return
-        out_dir = os.path.join(cfg.args.output, target)
+        out_dir = os.path.join(cfg.args.output, host)
         os.makedirs(out_dir, exist_ok=True)
-        ctx = {"target": target, "target_url": f"https://{target}",
+        ctx = {"target": host, "target_url": target_url,
                "out": out_dir, "wordlist": getattr(cfg, "wordlist", None) or cfg.args.wordlist}
 
         steps = list(cfg.all_steps())
@@ -248,6 +255,103 @@ def run_pipeline(cfg, target, step_ids, dry_run, allow_dangerous):
                 runner.log(f"error: {e}", sid)
                 runner.set(sid, "failed")
         runner.log("── pipeline finished ──")
+    finally:
+        runner.running = False
+        runner.current = None
+
+
+# ---------------------------------------------------------------------------
+# Batch run — many targets, N at a time (used by /api/run-batch)
+# ---------------------------------------------------------------------------
+def _exec_shell_tagged(cmd, host, out_dir, sid):
+    """Like _exec_shell but prefixes every output line with [host] for batch runs."""
+    logdir = os.path.join(out_dir, "logs")
+    os.makedirs(logdir, exist_ok=True)
+    env = bbpipe.tool_env()
+    pfx = f"[{host}] "
+    runner.log(pfx + f"$ {cmd}")
+    try:
+        proc = subprocess.Popen(["bash", "-c", f"set -o pipefail; {cmd}"],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                encoding="utf-8", errors="replace", bufsize=1, env=env)
+    except Exception as e:
+        runner.log(pfx + f"failed to start: {e}")
+        return
+    with open(os.path.join(logdir, f"{sid}.log"), "w") as lf:
+        for line in proc.stdout:
+            if runner.stop_flag:
+                proc.terminate()
+                break
+            runner.log(pfx + line.rstrip("\n"))
+            lf.write(line)
+    proc.wait()
+
+
+def _run_one_target(spec, dry_run, allow_dangerous):
+    scope = bbpipe.Scope.load(str(cfg.scope_path))
+    host, target_url = bbpipe.parse_target(spec)
+    runner.set_batch(host, "running")
+    runner.log(f"══════ START {host} ({target_url}) ══════")
+    out_dir = os.path.join(cfg.args.output, host)
+    os.makedirs(out_dir, exist_ok=True)
+    ctx = {"target": host, "target_url": target_url, "out": out_dir,
+           "wordlist": getattr(cfg, "wordlist", None) or cfg.args.wordlist}
+    pfx = f"[{host}] "
+    for st in cfg.all_steps():
+        if runner.stop_flag:
+            break
+        if not st.get("enabled", True):
+            continue
+        if st.get("dangerous") and not allow_dangerous:
+            continue
+        runner.log(pfx + f"── {st.get('name')} ──")
+        try:
+            if st.get("builtin"):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    bbpipe.BUILTINS[st["builtin"]](ctx, scope, st.get("params", {}))
+                for ln in buf.getvalue().split("\n"):
+                    if ln.strip():
+                        runner.log(pfx + ln)
+            else:
+                cmd = bbpipe.resolve(st.get("command", ""), ctx)
+                if dry_run:
+                    runner.log(pfx + f"[dry-run] {cmd}")
+                else:
+                    _exec_shell_tagged(cmd, host, out_dir, st.get("id"))
+        except Exception as e:
+            runner.log(pfx + f"error: {e}")
+    runner.set_batch(host, "done")
+    runner.log(f"══════ DONE {host} ══════")
+
+
+def run_batch(targets, concurrency, dry_run, allow_dangerous):
+    runner.reset()
+    runner.running = True
+    try:
+        scope = bbpipe.Scope.load(str(cfg.scope_path))
+        specs, seen = [], set()
+        for t in targets:
+            host, _ = bbpipe.parse_target(t)
+            if not host or host in seen:
+                continue
+            seen.add(host)
+            specs.append(t)
+        allowed = [s for s in specs if scope.is_allowed(bbpipe.parse_target(s)[0])]
+        for s in specs:
+            h = bbpipe.parse_target(s)[0]
+            runner.set_batch(h, "queued" if s in allowed else "out-of-scope")
+        runner.log(f"batch: {len(allowed)} in-scope / {len(specs)} total, "
+                   f"{concurrency} at a time"
+                   + ("  [DRY RUN]" if dry_run else ""))
+        if not allowed:
+            runner.log("no in-scope targets — check scope.yaml.")
+            return
+        with cf.ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+            futs = [ex.submit(_run_one_target, s, dry_run, allow_dangerous) for s in allowed]
+            for _ in cf.as_completed(futs):
+                pass
+        runner.log("══════ BATCH FINISHED ══════")
     finally:
         runner.running = False
         runner.current = None
@@ -355,7 +459,9 @@ def api_set_wordlist():
 def api_scope_check():
     scope = bbpipe.Scope.load(str(cfg.scope_path))
     t = request.args.get("target", "")
-    return jsonify({"target": t, "allowed": bool(t) and scope.is_allowed(t)})
+    host, url = bbpipe.parse_target(t)
+    return jsonify({"target": t, "host": host, "url": url,
+                    "allowed": bool(host) and scope.is_allowed(host)})
 
 
 @app.route("/api/run", methods=["POST"])
@@ -367,13 +473,37 @@ def api_run():
     if not target:
         return jsonify({"error": "target required"}), 400
     scope = bbpipe.Scope.load(str(cfg.scope_path))
-    if not scope.is_allowed(target):
-        return jsonify({"error": f"{target} is not in scope"}), 403
+    host, _ = bbpipe.parse_target(target)
+    if not scope.is_allowed(host):
+        return jsonify({"error": f"{host} is not in scope"}), 403
     t = threading.Thread(target=run_pipeline, args=(
         cfg, target, d.get("step_ids"), bool(d.get("dry_run")),
         bool(d.get("allow_dangerous"))), daemon=True)
     t.start()
     return jsonify({"ok": True})
+
+
+@app.route("/api/run-batch", methods=["POST"])
+def api_run_batch():
+    if runner.running:
+        return jsonify({"error": "a run is already in progress"}), 409
+    d = request.get_json(force=True)
+    raw = d.get("targets") or []
+    if isinstance(raw, str):
+        raw = raw.splitlines()
+    targets = [x.split(",")[0].strip() for x in raw
+               if x and x.strip() and not x.strip().startswith("#")]
+    if not targets:
+        return jsonify({"error": "no targets provided"}), 400
+    try:
+        conc = max(1, int(d.get("concurrency") or 3))
+    except (TypeError, ValueError):
+        conc = 3
+    th = threading.Thread(target=run_batch, args=(
+        targets, conc, bool(d.get("dry_run")), bool(d.get("allow_dangerous"))),
+        daemon=True)
+    th.start()
+    return jsonify({"ok": True, "count": len(targets)})
 
 
 @app.route("/api/stop", methods=["POST"])

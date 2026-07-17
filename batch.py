@@ -45,32 +45,26 @@ def out(msg):
         print(msg, flush=True)
 
 
-def normalize(entry):
-    """Turn a link/host into a bare domain: strip scheme, path, query, port."""
-    e = entry.strip().strip('"').strip("'")
-    if not e or e.startswith("#"):
-        return None
-    e = re.sub(r"^\w+://", "", e)          # https://  ->
-    e = e.split("/")[0].split("?")[0]       # drop path / query
-    e = e.split(":")[0]                     # drop :port
-    return e.lower() or None
-
-
 def load_targets(path):
+    """Read a CSV/txt of targets. Keeps each entry's scheme/path (parse_target
+    honors http/https), dedups by bare host."""
     if not os.path.exists(path):
         sys.exit(f"targets file not found: {path}")
     lines = open(path).read().splitlines()
-    hosts, seen = [], set()
+    specs, seen = [], set()
     for i, line in enumerate(lines):
-        h = normalize(line.split(",")[0])   # CSV: first column
-        if not h:
+        entry = line.split(",")[0].strip().strip('"').strip("'")
+        if not entry or entry.startswith("#"):
             continue
-        if i == 0 and any(k in h for k in ("target", "domain", "url", "host")):
+        host, url = bbpipe.parse_target(entry)
+        if not host:
+            continue
+        if i == 0 and any(k in host for k in ("target", "domain", "url", "host")):
             continue                        # skip a header row
-        if h not in seen:
-            seen.add(h)
-            hosts.append(h)
-    return hosts
+        if host not in seen:
+            seen.add(host)
+            specs.append(url)               # full url, scheme preserved
+    return specs
 
 
 def run_cmd(cmd, out_dir, sid):
@@ -82,13 +76,14 @@ def run_cmd(cmd, out_dir, sid):
                                stdout=lf, stderr=subprocess.STDOUT, env=env)
 
 
-def run_target(cfg, target, scope, args):
-    out(f"  ▶ start  {target}")
-    out_dir = os.path.join(args.output, target)
+def run_target(cfg, spec, scope, args):
+    host, url = bbpipe.parse_target(spec)   # honor http/https + path
+    out(f"  ▶ start  {host}")
+    out_dir = os.path.join(args.output, host)
     os.makedirs(out_dir, exist_ok=True)
-    ctx = {"target": target, "target_url": f"https://{target}",
+    ctx = {"target": host, "target_url": url,
            "out": out_dir, "wordlist": args.wordlist}
-    s = {"target": target, "done": 0, "failed": 0, "skipped": 0, "blocked": 0}
+    s = {"target": host, "done": 0, "failed": 0, "skipped": 0, "blocked": 0}
 
     with open(os.path.join(out_dir, "batch_run.log"), "w") as master:
         def w(t):
@@ -148,8 +143,8 @@ def main():
     scope = bbpipe.Scope.load(args.scope)
 
     targets = load_targets(args.targets)
-    allowed = [t for t in targets if scope.is_allowed(t)]
-    refused = [t for t in targets if not scope.is_allowed(t)]
+    allowed = [t for t in targets if scope.is_allowed(bbpipe.parse_target(t)[0])]
+    refused = [t for t in targets if not scope.is_allowed(bbpipe.parse_target(t)[0])]
 
     out(f"\n  targets in file : {len(targets)}")
     out(f"  in scope        : {len(allowed)}")

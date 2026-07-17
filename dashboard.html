@@ -31,6 +31,18 @@
   .wl-label{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12.5px}
   #wordlist{background:var(--cmd);border:1px solid var(--border);color:var(--text);border-radius:7px;
     padding:6px 8px;font-size:12px;max-width:240px}
+  .batchbar{background:var(--panel);border-bottom:1px solid var(--border);padding:9px 16px}
+  .batchbar summary{cursor:pointer;color:var(--accent);font-size:13px;font-weight:600;user-select:none}
+  .batchbody{margin-top:11px;display:flex;flex-direction:column;gap:10px}
+  #batchTargets{width:100%;min-height:82px;background:var(--cmd);border:1px solid var(--border);
+    color:var(--text);border-radius:8px;padding:9px;font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:12.5px;resize:vertical}
+  .batchrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .batchrow select{background:var(--cmd);border:1px solid var(--border);color:var(--text);
+    border-radius:7px;padding:6px 9px;font-size:12.5px}
+  .filelbl{cursor:pointer;background:var(--panel2);border:1px solid var(--border);border-radius:7px;
+    padding:7px 11px;font-size:12.5px}
+  .filelbl:hover{border-color:var(--accent)}
   .steps{overflow-y:auto;padding:16px 18px;border-right:1px solid var(--border)}
   .console-wrap{display:flex;flex-direction:column;background:var(--cmd)}
   .phase{margin:6px 0 16px}
@@ -88,7 +100,7 @@
 <body>
 <header>
   <h1>⛓ bbpipe</h1>
-  <input type="text" id="target" placeholder="target domain, e.g. example.com">
+  <input type="text" id="target" placeholder="domain or full URL — example.com or http://ffuf.me/cd/basic/">
   <span id="scopeState" class="info"></span>
   <span class="sp"></span>
   <label class="wl-label">wordlist:
@@ -107,6 +119,29 @@
   <span class="sp"></span>
   <span id="runState" class="info">idle</span>
 </div>
+
+<details class="batchbar" id="batchbar">
+  <summary>▦ Batch mode — run many targets from a list / CSV</summary>
+  <div class="batchbody">
+    <textarea id="batchTargets" placeholder="one target per line — domain OR full URL&#10;example.com&#10;http://ffuf.me/cd/basic/&#10;https://api.example.com"></textarea>
+    <div class="batchrow">
+      <label class="filelbl">📄 Load CSV / txt<input type="file" id="csvFile" accept=".csv,.txt" hidden></label>
+      <label>Batch size:
+        <select id="batchConc">
+          <option value="1">1 (one at a time)</option>
+          <option value="3" selected>3 at a time</option>
+          <option value="5">5 at a time</option>
+          <option value="10">10 at a time</option>
+          <option value="999">all at once</option>
+        </select>
+      </label>
+      <span id="batchCount" class="info"></span>
+      <span class="sp"></span>
+      <button class="primary" id="runBatchBtn">▶ Run batch</button>
+    </div>
+    <div class="info" style="font-size:.8rem">Runs every <b>enabled</b> step against each target (honors Dry-run &amp; Allow-dangerous above). Out-of-scope targets are skipped. Each target → its own <code>output/&lt;host&gt;/</code>.</div>
+  </div>
+</details>
 
 <div class="layout">
   <div class="steps" id="steps"></div>
@@ -299,6 +334,37 @@ $('runSelBtn').onclick=()=>{
 };
 $('stopBtn').onclick=async()=>{await api('/api/stop',{method:'POST'});toast('stopping…');};
 $('clearBtn').onclick=()=>{$('console').innerHTML='';};
+
+// ---- Batch mode (many targets) ----
+function batchTargetList(){
+  return $('batchTargets').value.split(/\n/).map(l=>l.split(',')[0].trim())
+    .filter(l=>l && !l.startsWith('#'));
+}
+function updateBatchCount(){
+  const n=batchTargetList().length;
+  $('batchCount').textContent=n?`${n} target${n>1?'s':''}`:'';
+}
+$('batchTargets').addEventListener('input',updateBatchCount);
+$('csvFile').onchange=e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    const lines=rd.result.split(/\r?\n/).map(l=>l.split(',')[0].trim()).filter(l=>l&&!l.startsWith('#'));
+    $('batchTargets').value=lines.join('\n'); updateBatchCount();
+    toast(lines.length+' targets loaded from '+f.name);
+  };
+  rd.readAsText(f);
+};
+$('runBatchBtn').onclick=async()=>{
+  const targets=batchTargetList();
+  if(!targets.length){toast('add some targets first');return;}
+  const r=await api('/api/run-batch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({targets, concurrency:parseInt($('batchConc').value),
+      dry_run:$('dryRun').checked, allow_dangerous:$('allowDanger').checked})});
+  if(r.error){toast('⚠ '+r.error);return;}
+  lastLine=0; $('console').innerHTML=''; startPolling();
+  toast('batch started: '+r.count+' targets');
+};
 $('reloadBtn').onclick=async()=>{await api('/api/reload',{method:'POST'});await loadConfig();toast('config reloaded');};
 $('toolsBtn').onclick=async()=>{TOOLS=await api('/api/tools');render();
   const miss=Object.entries(TOOLS).filter(([k,v])=>!v).map(([k])=>k);
@@ -326,9 +392,18 @@ async function updateStatus(){
     const status=s.results[st.dataset.id];
     if(status)st.querySelector('.stat').innerHTML=statusPill(status);
   });
-  $('runState').textContent=s.running?('running: '+(s.current||'')):'idle';
+  // status line — batch progress if a batch is running, else single-run state
+  const bh=s.batch?Object.values(s.batch):[];
+  if(bh.length){
+    const done=bh.filter(x=>x==='done').length;
+    const oos=bh.filter(x=>x==='out-of-scope').length;
+    $('runState').textContent=`batch: ${done}/${bh.length} done`+(oos?` (${oos} out-of-scope)`:'')+(s.running?' …':'');
+  } else {
+    $('runState').textContent=s.running?('running: '+(s.current||'')):'idle';
+  }
   $('stopBtn').disabled=!s.running;
   $('runAllBtn').disabled=s.running;$('runSelBtn').disabled=s.running;
+  $('runBatchBtn').disabled=s.running;
   if(!s.running&&poll){clearInterval(poll);poll=null;}
 }
 

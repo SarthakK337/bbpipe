@@ -103,6 +103,25 @@ def default_wordlist():
     return _BUNDLED_WL  # last resort (should always exist in the repo)
 
 
+def parse_target(raw):
+    """Split a user-entered target into (bare_host, full_url).
+
+    Honors a scheme/path the user typed (http:// or https://, and any path),
+    and defaults to https:// only when no scheme is given. So:
+      example.com                 -> ("example.com", "https://example.com")
+      http://ffuf.me/cd/basic/    -> ("ffuf.me",     "http://ffuf.me/cd/basic")
+      https://api.example.com     -> ("api.example.com", "https://api.example.com")
+    {target} = bare host (for subfinder/gau/etc.); {target_url} = full URL (for ffuf/nuclei/etc.).
+    """
+    raw = (raw or "").strip()
+    m = re.match(r"^(https?)://(.*)$", raw, re.I)
+    scheme, rest = (m.group(1).lower(), m.group(2)) if m else ("https", raw)
+    rest = rest.split("?")[0].split("#")[0]
+    host = rest.split("/")[0]
+    path = rest[len(host):].rstrip("/")
+    return host, f"{scheme}://{host}{path}"
+
+
 # ----------------------------------------------------------------------------
 # Command helpers
 # ----------------------------------------------------------------------------
@@ -406,18 +425,19 @@ def main():
         sys.exit("--target is required (or use --check)")
 
     scope = Scope.load(args.scope)
+    host, target_url = parse_target(args.target)   # honor http/https + path the user typed
 
-    # Scope gate
-    if not scope.is_allowed(args.target):
-        sys.exit(f"{C.RED}REFUSING: {args.target} is not in scope ({args.scope}).{C.R}\n"
+    # Scope gate (checked against the bare host)
+    if not scope.is_allowed(host):
+        sys.exit(f"{C.RED}REFUSING: {host} is not in scope ({args.scope}).{C.R}\n"
                  f"{scope.describe()}")
 
-    out = os.path.join(args.output, args.target)
+    out = os.path.join(args.output, host)
     os.makedirs(out, exist_ok=True)
-    ctx = {"target": args.target, "target_url": f"https://{args.target}",
+    ctx = {"target": host, "target_url": target_url,
            "out": out, "wordlist": args.wordlist}
 
-    banner(f"bbpipe — target: {args.target}", C.MAG)
+    banner(f"bbpipe — target: {target_url}", C.MAG)
     print(scope.describe())
     print(f"output: {out}")
     if args.dry_run:
