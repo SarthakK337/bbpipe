@@ -84,16 +84,16 @@ phases:
       - id: ffuf
         name: "Directory / file brute force (ffuf)"
         tool: ffuf
-        command: "ffuf -u {target_url}/FUZZ -w {wordlist} -mc 200,204,301,302,307,401,403 -o {out}/ffuf.json"
+        command: "ffuf -u {target_url}/FUZZ -w {wordlist} -mc 200,204,301,302,307,401,403 -t 20 -rate 40 -timeout 10 -o {out}/ffuf.json"
         enabled: true
-        info: "Finds hidden paths/files. Throttle with -rate if the target is small."
+        info: "Finds hidden paths/files. Throttled (-t 20 -rate 40) to avoid tripping WAF/rate-limits. If you STILL get lots of errors/zeros, lower it: -rate 10 -t 5. If a big target with no protection, raise -rate."
         alternatives:
           - tool: dirsearch
-            command: "dirsearch -u {target_url} --format=plain -o {out}/dirsearch.txt"
+            command: "dirsearch -u {target_url} -t 20 --format=plain -o {out}/dirsearch.txt"
           - tool: gobuster
-            command: "gobuster dir -u {target_url} -w {wordlist} -o {out}/gobuster.txt"
+            command: "gobuster dir -u {target_url} -w {wordlist} -t 20 --delay 20ms -o {out}/gobuster.txt"
           - tool: feroxbuster
-            command: "feroxbuster -u {target_url} -w {wordlist} -o {out}/feroxbuster.txt"
+            command: "feroxbuster -u {target_url} -w {wordlist} -t 20 --rate-limit 40 -o {out}/feroxbuster.txt"
 
   # --------------------------------------------------------------------------
   - name: "6. URL & parameter collection"
