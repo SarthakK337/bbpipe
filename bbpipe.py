@@ -136,6 +136,7 @@ def tool_env():
     env = dict(os.environ)
     env["LANG"] = "C.UTF-8"       # force UTF-8 so tools don't render output as '?'
     env["LC_ALL"] = "C.UTF-8"
+    env["NO_COLOR"] = "1"         # ask tools (ffuf, nuclei, …) to skip color escape codes
     env["PATH"] = env.get("PATH", "") + ":" + os.path.expanduser("~/go/bin")
     return env
 

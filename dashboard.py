@@ -40,7 +40,11 @@ import yaml
 import bbpipe  # reuse Scope, resolve, BUILTINS from the CLI
 
 HERE = Path(__file__).resolve().parent
-ANSI = re.compile(r"\033\[[0-9;]*m")
+# Strip ALL terminal escape sequences (color, cursor moves, clear-line, etc.),
+# not just color — ffuf/others emit these and they render as '?' in the browser.
+ANSI = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+# Remaining control chars (incl. carriage returns) that also render as junk.
+CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 app = Flask(__name__)
 
 
@@ -136,8 +140,11 @@ class Runner:
 
     def log(self, text, step=None):
         with self.lock:
-            for ln in str(text).split("\n"):
-                self.lines.append({"i": len(self.lines), "step": step, "text": ANSI.sub("", ln)})
+            for ln in str(text).replace("\r", "\n").split("\n"):
+                clean = CTRL.sub("", ANSI.sub("", ln))
+                if clean.strip() == "" and ln != "":
+                    continue  # drop lines that were pure control/escape noise
+                self.lines.append({"i": len(self.lines), "step": step, "text": clean})
 
     def set(self, step_id, status):
         with self.lock:
