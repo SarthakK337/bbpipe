@@ -181,13 +181,19 @@ python3 dashboard.py
 ```
 
 From the dashboard you can:
-- enter a target (with a **live in-scope / not-in-scope** indicator),
+- enter a target — **domain or full URL** (`example.com` or `http://ffuf.me/cd/basic/`);
+  the scheme you type is honored (http/https), with a **live in-scope** indicator,
+- pick the **wordlist** from a dropdown (bundled + any installed lists, with word counts),
 - **toggle** any step on/off, **edit** its command, or **switch tools** from a dropdown,
 - **➕ Add your own step** — type a name + command (at the bottom of the step list),
   **💾 Save** edits, and **🗑 Delete** steps you added — all without touching any file,
+- **▦ Batch mode** — paste a list or **upload a CSV** of targets and run them
+  **N-at-a-time** (batch size 1/3/5/10/all),
 - **Run all enabled**, **Run selected**, run **one step**, or **Dry-run**,
 - **Stop** a run mid-way,
-- watch **live output** stream in, with a status pill per step.
+- watch **live output** stream in, with a status pill per step,
+- **📊 Analyze** ffuf results — groups hits by **status code** and **response size** and
+  flags catch-all/false-positive noise, surfacing the **likely-real** hits.
 
 To edit a step: **click it to expand**, change the command box, hit **Save**. Custom
 steps you add persist in `.bbpipe_state.json` and can use the same placeholders as
