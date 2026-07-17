@@ -239,16 +239,26 @@ function stepCard(st){
     toast('saved');
   };
 
+  // Save the step's CURRENT command/tool to the backend (so runs use what you see).
+  const saveStep=async(silent)=>{
+    if(builtin) return;
+    const cmd=d.querySelector('.cmd'), tool=d.querySelector('.tool');
+    const payload={id:st.id, command:cmd.value};
+    if(tool) payload.tool=alts[tool.value].tool;
+    await api('/api/step',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)});
+    if(!silent) toast('saved ✓');
+  };
+
   if(!builtin){
     const cmd=d.querySelector('.cmd'), tool=d.querySelector('.tool');
-    if(tool) tool.onchange=()=>{cmd.value=alts[tool.value].command;};
-    d.querySelector('.save').onclick=async()=>{
-      const payload={id:st.id,command:cmd.value};
-      if(tool) payload.tool=alts[tool.value].tool;
-      await api('/api/step',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(payload)});
-      toast('command saved ✓');
+    // Changing the tool updates the command AND auto-saves it — no separate Save needed.
+    if(tool) tool.onchange=async()=>{
+      cmd.value=alts[tool.value].command;
+      await saveStep(true);
+      toast('tool → '+alts[tool.value].tool+' (saved)');
     };
+    d.querySelector('.save').onclick=()=>saveStep(false);
     const del=d.querySelector('.del');
     if(del) del.onclick=async()=>{
       if(!confirm('Delete this custom step?'))return;
@@ -258,7 +268,8 @@ function stepCard(st){
       toast('deleted'); await loadConfig();
     };
   }
-  d.querySelector('.runOne').onclick=()=>run([st.id]);
+  // Running a step saves its current command first, so it always runs what you see.
+  d.querySelector('.runOne').onclick=async()=>{ await saveStep(true); run([st.id]); };
   return d;
 }
 
