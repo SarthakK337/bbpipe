@@ -362,10 +362,12 @@ def main():
     ap.add_argument("--scope", default="scope.yaml")
     ap.add_argument("--config", default="pipeline.yaml")
     ap.add_argument("--output", default="output")
-    ap.add_argument("--wordlist",
-                    default="/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt")
+    ap.add_argument("--wordlist", default=None,
+                    help="wordlist for content discovery (default: auto-detect an installed one)")
     ap.add_argument("--port", type=int, default=8777)
     args = ap.parse_args()
+    if not args.wordlist:
+        args.wordlist = bbpipe.default_wordlist()
 
     global cfg
     cfg = Config(args)

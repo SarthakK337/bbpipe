@@ -84,6 +84,23 @@ class Scope:
                 f"out-of-scope: {', '.join(self.out_of_scope) or '(none)'}")
 
 # ----------------------------------------------------------------------------
+# Wordlist auto-detection — pick the first list that actually exists on this box
+# ----------------------------------------------------------------------------
+WORDLIST_CANDIDATES = [
+    "/usr/share/seclists/Discovery/Web-Content/common.txt",
+    "/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt",
+    "/usr/share/wordlists/dirb/common.txt",
+    "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt",
+]
+
+def default_wordlist():
+    for c in WORDLIST_CANDIDATES:
+        if os.path.exists(c):
+            return c
+    return WORDLIST_CANDIDATES[0]  # nothing found; report path so the error is clear
+
+
+# ----------------------------------------------------------------------------
 # Command helpers
 # ----------------------------------------------------------------------------
 def resolve(template, ctx):
@@ -340,9 +357,8 @@ def main():
     ap.add_argument("--scope", default="scope.yaml", help="scope file (default: scope.yaml)")
     ap.add_argument("--config", default="pipeline.yaml", help="pipeline config (default: pipeline.yaml)")
     ap.add_argument("--output", default="output", help="output base dir (default: output)")
-    ap.add_argument("--wordlist",
-                    default="/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt",
-                    help="default wordlist for content discovery")
+    ap.add_argument("--wordlist", default=None,
+                    help="wordlist for content discovery (default: auto-detect an installed one)")
     ap.add_argument("--dry-run", action="store_true", help="print commands, run nothing")
     ap.add_argument("--auto", action="store_true", help="run enabled steps without prompting (DANGEROUS steps still confirm)")
     ap.add_argument("--full-auto", action="store_true",
@@ -357,6 +373,9 @@ def main():
         args.auto = True
         args.yes_authorized = True
 
+    if not args.wordlist:
+        args.wordlist = default_wordlist()
+
     if not os.path.exists(args.config):
         sys.exit(f"config not found: {args.config}")
     with open(args.config) as f:
@@ -364,6 +383,11 @@ def main():
 
     if args.check:
         check_tools(config)
+        wl = args.wordlist or default_wordlist()
+        if os.path.exists(wl):
+            print(f"\n  {C.GRN}✓{C.R} wordlist: {wl}")
+        else:
+            print(f"\n  {C.RED}✗{C.R} no wordlist found — run: {C.B}sudo apt install -y seclists{C.R}")
         return
 
     if not args.target:

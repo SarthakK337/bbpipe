@@ -136,12 +136,14 @@ def main():
     ap.add_argument("--scope", default="scope.yaml")
     ap.add_argument("--config", default="pipeline.yaml")
     ap.add_argument("--output", default="output")
-    ap.add_argument("--wordlist",
-                    default="/usr/share/wordlists/seclists/Discovery/Web-Content/common.txt")
+    ap.add_argument("--wordlist", default=None,
+                    help="wordlist for content discovery (default: auto-detect an installed one)")
     ap.add_argument("--dry-run", action="store_true", help="print commands, run nothing")
     ap.add_argument("--allow-dangerous", action="store_true", help="also run steps marked dangerous")
     ap.add_argument("--yes-authorized", action="store_true", help="skip the authorization prompt")
     args = ap.parse_args()
+    if not args.wordlist:
+        args.wordlist = bbpipe.default_wordlist()
 
     cfg = yaml.safe_load(open(args.config)) or {}
     scope = bbpipe.Scope.load(args.scope)
