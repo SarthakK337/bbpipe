@@ -128,13 +128,21 @@ def input_with_prefill(prompt, text):
         new = input(prompt)
         return new or text
 
+def tool_env():
+    """Environment for spawned tools: UTF-8 locale + Go bin on PATH."""
+    env = dict(os.environ)
+    env["LANG"] = "C.UTF-8"       # force UTF-8 so tools don't render output as '?'
+    env["LC_ALL"] = "C.UTF-8"
+    env["PATH"] = env.get("PATH", "") + ":" + os.path.expanduser("~/go/bin")
+    return env
+
 def run_shell(cmd, logfile):
     """Run cmd in bash, stream to terminal AND save to logfile via tee."""
     os.makedirs(os.path.dirname(logfile), exist_ok=True)
     # pipefail so a failing tool (not tee) is reported
     wrapped = f"set -o pipefail; {cmd} 2>&1 | tee {shlex_quote(logfile)}"
     print(f"{C.DIM}$ {cmd}{C.R}\n")
-    rc = subprocess.call(["bash", "-c", wrapped])
+    rc = subprocess.call(["bash", "-c", wrapped], env=tool_env())
     if rc == 0:
         print(f"\n{C.GRN}✓ done (log: {logfile}){C.R}")
     else:

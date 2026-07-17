@@ -162,8 +162,7 @@ def _exec_shell(cmd, step_id, out_dir):
     logdir = os.path.join(out_dir, "logs")
     os.makedirs(logdir, exist_ok=True)
     logfile = os.path.join(logdir, f"{step_id}.log")
-    env = dict(os.environ)
-    env["PATH"] = env.get("PATH", "") + ":" + os.path.expanduser("~/go/bin")
+    env = bbpipe.tool_env()   # UTF-8 locale + Go bin on PATH
     runner.log(f"$ {cmd}", step_id)
     try:
         proc = subprocess.Popen(["bash", "-c", f"set -o pipefail; {cmd}"],

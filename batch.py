@@ -76,8 +76,7 @@ def load_targets(path):
 def run_cmd(cmd, out_dir, sid):
     logdir = os.path.join(out_dir, "logs")
     os.makedirs(logdir, exist_ok=True)
-    env = dict(os.environ)
-    env["PATH"] = env.get("PATH", "") + ":" + os.path.expanduser("~/go/bin")
+    env = bbpipe.tool_env()   # UTF-8 locale + Go bin on PATH
     with open(os.path.join(logdir, f"{sid}.log"), "w") as lf:
         return subprocess.call(["bash", "-c", f"set -o pipefail; {cmd}"],
                                stdout=lf, stderr=subprocess.STDOUT, env=env)
