@@ -505,6 +505,104 @@ def api_analyze():
         return jsonify({"error": f"could not parse ffuf.json: {e}"}), 500
 
 
+SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4, "unknown": 5}
+
+
+def analyze_nuclei(path):
+    """Group nuclei JSONL findings by severity."""
+    from collections import Counter
+    sev = Counter()
+    findings = []
+    for line in open(path, encoding="utf-8", errors="ignore"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            j = json.loads(line)
+        except Exception:
+            continue
+        info = j.get("info", {}) or {}
+        s = (info.get("severity") or "unknown").lower()
+        sev[s] += 1
+        findings.append({"severity": s,
+                         "template": j.get("template-id") or j.get("templateID") or "",
+                         "name": info.get("name") or "",
+                         "matched_at": j.get("matched-at") or j.get("matched_at") or j.get("host") or ""})
+    findings.sort(key=lambda f: SEV_ORDER.get(f["severity"], 9))
+    return {"by_severity": {k: sev.get(k, 0) for k in ["critical", "high", "medium", "low", "info"]},
+            "total": int(sum(sev.values())), "findings": findings[:300]}
+
+
+def _count_lines(path):
+    try:
+        return sum(1 for l in open(path, encoding="utf-8", errors="ignore") if l.strip())
+    except Exception:
+        return 0
+
+
+def _host_metrics(host):
+    d = os.path.join(cfg.args.output, host)
+    m = {"host": host, "live": False, "ffuf_real": 0, "idor": 0,
+         "nuclei": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0, "total": 0}}
+    if os.path.exists(os.path.join(d, "live_hosts.txt")):
+        m["live"] = _count_lines(os.path.join(d, "live_hosts.txt")) > 0
+    ff = os.path.join(d, "ffuf.json")
+    if os.path.exists(ff):
+        try:
+            m["ffuf_real"] = analyze_ffuf(ff)["likely_count"]
+        except Exception:
+            pass
+    nu = os.path.join(d, "nuclei.jsonl")
+    if os.path.exists(nu):
+        try:
+            a = analyze_nuclei(nu)
+            m["nuclei"] = {**a["by_severity"], "total": a["total"]}
+        except Exception:
+            pass
+    m["idor"] = _count_lines(os.path.join(d, "idor_candidates.txt"))
+    n = m["nuclei"]
+    if n.get("critical") or n.get("high"):
+        m["risk"] = "high"
+    elif n.get("medium") or m["ffuf_real"] >= 5:
+        m["risk"] = "med"
+    else:
+        m["risk"] = "low"
+    return m
+
+
+@app.route("/api/results")
+def api_results():
+    base = cfg.args.output
+    hosts = []
+    if os.path.isdir(base):
+        for name in sorted(os.listdir(base)):
+            if os.path.isdir(os.path.join(base, name)):
+                hosts.append(_host_metrics(name))
+    rank = {"high": 0, "med": 1, "low": 2}
+    hosts.sort(key=lambda h: (rank.get(h.get("risk"), 3), -h["nuclei"]["total"], -h["ffuf_real"]))
+    return jsonify({"hosts": hosts})
+
+
+@app.route("/api/results-detail")
+def api_results_detail():
+    host = request.args.get("host", "")
+    d = os.path.join(cfg.args.output, host)
+    if not host or not os.path.isdir(d):
+        return jsonify({"error": "no results for that host"}), 404
+    out = {"host": host}
+    ff = os.path.join(d, "ffuf.json")
+    out["ffuf"] = analyze_ffuf(ff) if os.path.exists(ff) else None
+    nu = os.path.join(d, "nuclei.jsonl")
+    out["nuclei"] = analyze_nuclei(nu) if os.path.exists(nu) else None
+    idr = os.path.join(d, "idor_candidates.txt")
+    out["idor"] = ([l.strip() for l in open(idr, encoding="utf-8", errors="ignore") if l.strip()][:200]
+                   if os.path.exists(idr) else [])
+    lh = os.path.join(d, "live_hosts.txt")
+    out["live_hosts"] = ([l.strip() for l in open(lh, encoding="utf-8", errors="ignore") if l.strip()][:200]
+                         if os.path.exists(lh) else [])
+    return jsonify(out)
+
+
 @app.route("/api/scope-check")
 def api_scope_check():
     scope = bbpipe.Scope.load(str(cfg.scope_path))

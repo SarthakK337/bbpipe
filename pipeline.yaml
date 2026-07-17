@@ -126,7 +126,7 @@ phases:
       - id: nuclei
         name: "Template-based vuln + misconfig scan (nuclei)"
         tool: nuclei
-        command: "nuclei -l {out}/live_hosts.txt -o {out}/nuclei.txt"
+        command: "nuclei -l {out}/live_hosts.txt -jsonl -o {out}/nuclei.jsonl"
         enabled: true
         info: "Known CVEs, exposures (.env, panels), misconfigs. Add -severity low,medium,high,critical to focus."
 

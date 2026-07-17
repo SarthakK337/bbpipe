@@ -59,6 +59,20 @@
   .tag-noise{color:var(--warn);font-size:.72rem;border:1px solid var(--warn);border-radius:10px;padding:0 6px}
   .tag-real{color:var(--ok);font-size:.72rem;border:1px solid var(--ok);border-radius:10px;padding:0 6px}
   .realtbl td:first-child{font-weight:600}
+  .rtbl{border-collapse:collapse;width:100%;font-size:12.5px}
+  .rtbl th,.rtbl td{border:1px solid var(--border);padding:6px 9px;text-align:left;white-space:nowrap}
+  .rtbl th{background:var(--panel2)}
+  .rrow{cursor:pointer}
+  .rrow:hover{background:var(--panel2)}
+  .rrow.r-high{background:rgba(255,107,107,.10)}
+  .rrow.r-high:hover{background:rgba(255,107,107,.18)}
+  .rrow.r-med{background:rgba(240,180,52,.08)}
+  .risk-high{color:#fff;background:var(--danger);border-radius:10px;padding:1px 9px;font-size:.72rem;font-weight:700}
+  .risk-med{color:#111;background:var(--warn);border-radius:10px;padding:1px 9px;font-size:.72rem;font-weight:700}
+  .risk-low{color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:1px 9px;font-size:.72rem}
+  .idorlist{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:var(--muted);
+    max-height:200px;overflow:auto;background:var(--cmd);border:1px solid var(--border);border-radius:8px;padding:9px;margin-top:6px}
+  #resultsDetail h3{margin:20px 0 4px;color:var(--accent)}
   .steps{overflow-y:auto;padding:16px 18px;border-right:1px solid var(--border)}
   .console-wrap{display:flex;flex-direction:column;background:var(--cmd)}
   .phase{margin:6px 0 16px}
@@ -122,6 +136,7 @@
   <label class="wl-label">wordlist:
     <select id="wordlist" title="wordlist used by content-discovery steps (ffuf/gobuster/…)"></select>
   </label>
+  <button id="resultsBtn" class="primary" title="Overview of all scanned targets + drill-down analysis">📁 Results</button>
   <button id="reloadBtn" title="Reload pipeline.yaml from disk">↻ Reload config</button>
   <button id="toolsBtn">Check tools</button>
 </header>
@@ -177,6 +192,19 @@
   <div class="modal-box">
     <div class="modal-head"><b>📊 ffuf analysis</b><span class="sp"></span><button id="analyzeClose">✕ Close</button></div>
     <div class="modal-body" id="analyzeBody"></div>
+  </div>
+</div>
+
+<div class="modal" id="resultsModal">
+  <div class="modal-box" style="width:min(1120px,97vw)">
+    <div class="modal-head"><b>📁 Results Explorer</b>
+      <label class="chk" style="margin-left:14px;color:var(--muted)"><input type="checkbox" id="onlyProblem"> only problematic</label>
+      <button id="resultsRefresh" style="margin-left:8px">↻ Refresh</button>
+      <span class="sp"></span><button id="resultsClose">✕ Close</button></div>
+    <div class="modal-body">
+      <div id="resultsOverview"></div>
+      <div id="resultsDetail"></div>
+    </div>
   </div>
 </div>
 
@@ -389,6 +417,59 @@ function renderAnalysis(a){
     </div>
     <h4>✅ Likely real — ${a.likely_count} result(s) (sizes that don't repeat)</h4>
     <table class="realtbl"><tr><th>word</th><th>status</th><th>size</th><th>url</th></tr>${realRows||'<tr><td colspan="4">nothing stood out — every result matched a repeated size (all noise)</td></tr>'}</table>`;
+}
+
+// ---- Results Explorer (all targets) ----
+$('resultsBtn').onclick=async()=>{await loadResults(); $('resultsModal').style.display='flex';};
+$('resultsClose').onclick=()=>{$('resultsModal').style.display='none';};
+$('resultsRefresh').onclick=loadResults;
+$('resultsModal').onclick=e=>{if(e.target===$('resultsModal'))$('resultsModal').style.display='none';};
+$('onlyProblem').onchange=()=>renderOverview(window._results||[]);
+async function loadResults(){
+  const r=await api('/api/results'); window._results=r.hosts||[];
+  renderOverview(window._results); $('resultsDetail').innerHTML='';
+}
+function nucleiCell(n){
+  if(!n.total) return '—';
+  return [n.critical?`🔴${n.critical}C`:'',n.high?`🔴${n.high}H`:'',n.medium?`🟠${n.medium}M`:'',
+          n.low?`🟡${n.low}L`:'',n.info?`⚪${n.info}`:''].filter(Boolean).join(' ');
+}
+function renderOverview(hosts){
+  const only=$('onlyProblem').checked;
+  const rows=hosts.filter(h=>!only||h.risk!=='low').map(h=>
+    `<tr class="rrow r-${h.risk}" data-host="${esc(h.host)}">
+      <td>${esc(h.host)}</td><td>${h.live?'✅':'—'}</td><td>${h.ffuf_real}</td>
+      <td>${nucleiCell(h.nuclei)}</td><td>${h.idor}</td>
+      <td><span class="risk-${h.risk}">${h.risk.toUpperCase()}</span></td></tr>`).join('');
+  $('resultsOverview').innerHTML=
+    `<table class="rtbl"><tr><th>host</th><th>live</th><th>paths</th><th>nuclei</th><th>IDOR</th><th>risk</th></tr>`
+    +(rows||'<tr><td colspan="6">no results yet — run a scan or batch first</td></tr>')+`</table>`
+    +`<p class="info" style="margin-top:8px">Click a row to see that target’s full analysis ↓</p>`;
+  document.querySelectorAll('.rrow').forEach(tr=>tr.onclick=()=>loadDetail(tr.dataset.host));
+}
+async function loadDetail(host){
+  const r=await api('/api/results-detail?host='+encodeURIComponent(host));
+  if(r.error){toast('⚠ '+r.error);return;}
+  let h=`<h3>🔎 ${esc(host)}</h3>`;
+  if(r.nuclei){
+    const b=r.nuclei.by_severity;
+    h+=`<h4>nuclei — ${r.nuclei.total} finding(s)</h4>`
+      +`<p class="info">critical ${b.critical} · high ${b.high} · medium ${b.medium} · low ${b.low} · info ${b.info}</p>`;
+    if(r.nuclei.findings.length) h+=`<table><tr><th>sev</th><th>template</th><th>matched at</th></tr>`
+      +r.nuclei.findings.map(f=>`<tr><td>${esc(f.severity)}</td><td>${esc(f.template)}</td><td class="u">${esc(f.matched_at)}</td></tr>`).join('')+`</table>`;
+  }
+  if(r.ffuf){
+    h+=`<h4>ffuf — ${r.ffuf.likely_count} likely-real path(s)</h4>`;
+    if(r.ffuf.likely_real.length) h+=`<table><tr><th>word</th><th>status</th><th>size</th></tr>`
+      +r.ffuf.likely_real.map(x=>`<tr><td>${esc(x.word)}</td><td>${x.status}</td><td>${x.size}</td></tr>`).join('')+`</table>`;
+  }
+  if(r.idor&&r.idor.length){
+    h+=`<h4>IDOR candidates — ${r.idor.length} (test manually)</h4><div class="idorlist">`
+      +r.idor.slice(0,80).map(esc).join('<br>')+`</div>`;
+  }
+  if(!r.nuclei&&!r.ffuf&&!(r.idor&&r.idor.length)) h+=`<p class="info">No parseable results for this host yet.</p>`;
+  $('resultsDetail').innerHTML=h;
+  $('resultsDetail').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
 // ---- Batch mode (many targets) ----
