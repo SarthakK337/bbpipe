@@ -203,7 +203,7 @@ def run_pipeline(cfg, target, step_ids, dry_run, allow_dangerous):
         out_dir = os.path.join(cfg.args.output, target)
         os.makedirs(out_dir, exist_ok=True)
         ctx = {"target": target, "target_url": f"https://{target}",
-               "out": out_dir, "wordlist": cfg.args.wordlist}
+               "out": out_dir, "wordlist": getattr(cfg, "wordlist", None) or cfg.args.wordlist}
 
         steps = list(cfg.all_steps())
         if step_ids:
@@ -307,6 +307,43 @@ def api_delete_step():
     return jsonify({"error": "only custom steps can be deleted"}), 400
 
 
+def list_wordlists():
+    """All wordlists we can offer: the auto-detect candidates + everything in wordlists/."""
+    import glob
+    paths = list(bbpipe.WORDLIST_CANDIDATES)
+    paths += sorted(glob.glob(str(HERE / "wordlists" / "*.txt")))
+    cur = getattr(cfg, "wordlist", None)
+    if cur:
+        paths.insert(0, cur)
+    seen, out = set(), []
+    for p in paths:
+        ap = os.path.abspath(p)
+        if ap in seen or not os.path.exists(ap):
+            continue
+        seen.add(ap)
+        try:
+            n = sum(1 for _ in open(ap, encoding="utf-8", errors="ignore"))
+        except Exception:
+            n = 0
+        out.append({"path": p, "label": f"{os.path.basename(p)} ({n:,} words)", "count": n})
+    return out
+
+
+@app.route("/api/wordlists")
+def api_wordlists():
+    return jsonify({"current": getattr(cfg, "wordlist", None), "options": list_wordlists()})
+
+
+@app.route("/api/wordlist", methods=["POST"])
+def api_set_wordlist():
+    d = request.get_json(force=True)
+    p = d.get("path", "")
+    if not p or not os.path.exists(p):
+        return jsonify({"error": "wordlist not found"}), 400
+    cfg.wordlist = p
+    return jsonify({"ok": True, "current": p})
+
+
 @app.route("/api/scope-check")
 def api_scope_check():
     scope = bbpipe.Scope.load(str(cfg.scope_path))
@@ -370,6 +407,7 @@ def main():
 
     global cfg
     cfg = Config(args)
+    cfg.wordlist = args.wordlist   # currently-selected wordlist (changeable from the UI)
     print(f"\n  bbpipe dashboard →  http://127.0.0.1:{args.port}\n")
     print("  Bound to localhost only. Ctrl+C to stop.\n")
     # 127.0.0.1 ONLY — this executes shell commands; never expose it.

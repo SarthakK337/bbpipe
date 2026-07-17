@@ -28,6 +28,9 @@
   button:disabled{opacity:.4;cursor:not-allowed}
   .layout{display:grid;grid-template-columns:1fr 1fr;gap:0;height:calc(100vh - 58px)}
   @media(max-width:900px){.layout{grid-template-columns:1fr;height:auto}}
+  .wl-label{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12.5px}
+  #wordlist{background:var(--cmd);border:1px solid var(--border);color:var(--text);border-radius:7px;
+    padding:6px 8px;font-size:12px;max-width:240px}
   .steps{overflow-y:auto;padding:16px 18px;border-right:1px solid var(--border)}
   .console-wrap{display:flex;flex-direction:column;background:var(--cmd)}
   .phase{margin:6px 0 16px}
@@ -88,6 +91,9 @@
   <input type="text" id="target" placeholder="target domain, e.g. example.com">
   <span id="scopeState" class="info"></span>
   <span class="sp"></span>
+  <label class="wl-label">wordlist:
+    <select id="wordlist" title="wordlist used by content-discovery steps (ffuf/gobuster/…)"></select>
+  </label>
   <button id="reloadBtn" title="Reload pipeline.yaml from disk">↻ Reload config</button>
   <button id="toolsBtn">Check tools</button>
 </header>
@@ -129,6 +135,19 @@ async function loadConfig(){
   renderScope();
   render();
   checkScope();
+  loadWordlists();
+}
+
+async function loadWordlists(){
+  const w=await api('/api/wordlists');
+  const sel=$('wordlist');
+  sel.innerHTML=(w.options||[]).map(o=>
+    `<option value="${o.path}" ${o.path===w.current?'selected':''}>${o.label}</option>`).join('');
+  sel.onchange=async()=>{
+    const r=await api('/api/wordlist',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({path:sel.value})});
+    toast(r.error?('⚠ '+r.error):('wordlist: '+sel.value.split('/').pop()));
+  };
 }
 
 function renderScope(){
