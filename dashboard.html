@@ -69,6 +69,14 @@
   .console .l-err{color:var(--danger)}
   .caret{cursor:pointer;color:var(--muted);user-select:none;width:12px}
   .disabled-step{opacity:.55}
+  .del{background:#3a2222;border-color:#8f4f4f;color:#ffb3b3}
+  .addcard{background:var(--panel);border:1px dashed var(--accent);border-radius:9px;padding:14px;margin:18px 0 30px}
+  .addhead{font-weight:600;color:var(--accent);margin-bottom:10px}
+  .astep-name,.astep-cmd{width:100%;background:var(--cmd);border:1px solid var(--border);color:#e6e8ec;
+    border-radius:7px;padding:9px;margin-bottom:8px;font-size:13px}
+  .astep-cmd{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;resize:vertical}
+  .addhint{font-size:.8rem;color:var(--muted);margin-bottom:10px}
+  .addhint code{background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.9em}
   .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ok);color:#fff;
     padding:9px 18px;border-radius:8px;opacity:0;transition:.25s;pointer-events:none;font-weight:600}
   .toast.show{opacity:1}
@@ -140,11 +148,33 @@ function render(){
     ph.steps.forEach(st=>pd.appendChild(stepCard(st)));
     c.appendChild(pd);
   });
+  c.appendChild(addStepCard());
+}
+
+function addStepCard(){
+  const d=document.createElement('div');
+  d.className='addcard';
+  d.innerHTML=`
+    <div class="addhead">➕ Add your own step</div>
+    <input class="astep-name" type="text" placeholder="step name — e.g. My custom nikto scan">
+    <textarea class="astep-cmd" rows="2" placeholder="command — e.g.  nikto -h {target_url} -o {out}/mynikto.txt"></textarea>
+    <div class="addhint">placeholders you can use: <code>{target}</code> <code>{target_url}</code> <code>{out}</code> <code>{wordlist}</code></div>
+    <button class="astep-add primary">＋ Add step</button>`;
+  d.querySelector('.astep-add').onclick=async()=>{
+    const name=d.querySelector('.astep-name').value.trim();
+    const command=d.querySelector('.astep-cmd').value.trim();
+    if(!command){toast('enter a command first');return;}
+    const r=await api('/api/add-step',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name,command})});
+    if(r.error){toast('⚠ '+r.error);return;}
+    toast('step added ✓'); await loadConfig();
+  };
+  return d;
 }
 
 function stepCard(st){
   const d=document.createElement('div');
-  d.className='step'+(st.dangerous?' dangerous':'')+(st.enabled===false?' disabled-step':'');
+  d.className='step'+(st.dangerous?' dangerous':'')+(st.enabled===false?' disabled-step':'')+(st.custom?' open':'');
   d.dataset.id=st.id;
   const builtin=!!st.builtin;
   const toolBin=(st.tool||'').split(' ')[0];
@@ -167,10 +197,10 @@ function stepCard(st){
       ${st.info?`<div class="info">${st.info}</div>`:''}
       ${builtin?'':`
         <div class="row">
-          <span class="info">tool:</span>
-          <select class="tool">${opts}</select>
+          ${st.custom?'':`<span class="info">tool:</span><select class="tool">${opts}</select>`}
           <button class="runOne primary">▶ Run this step</button>
-          <button class="save">Save</button>
+          <button class="save">💾 Save</button>
+          ${st.custom?'<button class="del">🗑 Delete</button>':''}
         </div>
         <textarea class="cmd" rows="2">${(st.command||'').replace(/</g,'&lt;')}</textarea>
       `}
@@ -192,11 +222,21 @@ function stepCard(st){
 
   if(!builtin){
     const cmd=d.querySelector('.cmd'), tool=d.querySelector('.tool');
-    tool.onchange=()=>{cmd.value=alts[tool.value].command;};
+    if(tool) tool.onchange=()=>{cmd.value=alts[tool.value].command;};
     d.querySelector('.save').onclick=async()=>{
+      const payload={id:st.id,command:cmd.value};
+      if(tool) payload.tool=alts[tool.value].tool;
       await api('/api/step',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({id:st.id,tool:alts[tool.value].tool,command:cmd.value})});
-      toast('command saved');
+        body:JSON.stringify(payload)});
+      toast('command saved ✓');
+    };
+    const del=d.querySelector('.del');
+    if(del) del.onclick=async()=>{
+      if(!confirm('Delete this custom step?'))return;
+      const r=await api('/api/delete-step',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:st.id})});
+      if(r.error){toast('⚠ '+r.error);return;}
+      toast('deleted'); await loadConfig();
     };
   }
   d.querySelector('.runOne').onclick=()=>run([st.id]);

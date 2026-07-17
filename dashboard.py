@@ -59,20 +59,57 @@ class Config:
         self.raw = yaml.safe_load(open(self.config_path)) or {}
         self.overrides = json.load(open(self.state_path)) if self.state_path.exists() else {}
 
-    def save_override(self, step_id, fields):
-        self.overrides[step_id] = {**self.overrides.get(step_id, {}), **fields}
+    def _save(self):
         json.dump(self.overrides, open(self.state_path, "w"), indent=2)
 
+    def _custom(self):
+        return self.overrides.setdefault("_custom", [])
+
+    def save_override(self, step_id, fields):
+        # A custom step edits its own record; a pipeline.yaml step gets an override entry.
+        for c in self._custom():
+            if c.get("id") == step_id:
+                c.update(fields)
+                self._save()
+                return
+        self.overrides[step_id] = {**self.overrides.get(step_id, {}), **fields}
+        self._save()
+
+    def add_custom(self, name, command, tool="custom"):
+        ids = [c["id"] for c in self._custom()]
+        n = 1
+        while f"custom_{n}" in ids:
+            n += 1
+        step = {"id": f"custom_{n}", "name": name or f"Custom step {n}",
+                "tool": tool or "custom", "command": command,
+                "enabled": True, "custom": True,
+                "info": "Custom step you added from the dashboard."}
+        self._custom().append(step)
+        self._save()
+        return step
+
+    def delete_custom(self, step_id):
+        before = len(self._custom())
+        self.overrides["_custom"] = [c for c in self._custom() if c.get("id") != step_id]
+        self.overrides.pop(step_id, None)
+        self._save()
+        return len(self.overrides["_custom"]) < before
+
     def phases(self):
-        """Phases with per-step overrides applied."""
+        """Phases with per-step overrides applied, plus a phase of user-added steps."""
         out = []
         for ph in self.raw.get("phases", []):
             steps = []
             for st in ph.get("steps", []):
                 merged = dict(st)
-                merged.update(self.overrides.get(st.get("id"), {}))
+                ov = self.overrides.get(st.get("id"))
+                if isinstance(ov, dict):
+                    merged.update(ov)
                 steps.append(merged)
             out.append({"name": ph.get("name"), "steps": steps})
+        custom = self._custom()
+        if custom:
+            out.append({"name": "★ Custom steps (yours)", "steps": [dict(c) for c in custom]})
         return out
 
     def all_steps(self):
@@ -251,6 +288,24 @@ def api_step():
     fields = {k: d[k] for k in ("tool", "command", "enabled") if k in d}
     cfg.save_override(sid, fields)
     return jsonify({"ok": True})
+
+
+@app.route("/api/add-step", methods=["POST"])
+def api_add_step():
+    d = request.get_json(force=True)
+    command = (d.get("command") or "").strip()
+    if not command:
+        return jsonify({"error": "command required"}), 400
+    step = cfg.add_custom(d.get("name", ""), command, d.get("tool", "custom"))
+    return jsonify({"ok": True, "step": step})
+
+
+@app.route("/api/delete-step", methods=["POST"])
+def api_delete_step():
+    d = request.get_json(force=True)
+    if cfg.delete_custom(d.get("id")):
+        return jsonify({"ok": True})
+    return jsonify({"error": "only custom steps can be deleted"}), 400
 
 
 @app.route("/api/scope-check")

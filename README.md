@@ -183,9 +183,15 @@ python3 dashboard.py
 From the dashboard you can:
 - enter a target (with a **live in-scope / not-in-scope** indicator),
 - **toggle** any step on/off, **edit** its command, or **switch tools** from a dropdown,
+- **➕ Add your own step** — type a name + command (at the bottom of the step list),
+  **💾 Save** edits, and **🗑 Delete** steps you added — all without touching any file,
 - **Run all enabled**, **Run selected**, run **one step**, or **Dry-run**,
 - **Stop** a run mid-way,
 - watch **live output** stream in, with a status pill per step.
+
+To edit a step: **click it to expand**, change the command box, hit **Save**. Custom
+steps you add persist in `.bbpipe_state.json` and can use the same placeholders as
+any command: `{target}`, `{target_url}`, `{out}`, `{wordlist}`.
 
 Notes:
 - It uses the **same** `pipeline.yaml` and `scope.yaml` as the CLI. Edits made in
