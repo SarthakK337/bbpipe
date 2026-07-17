@@ -455,6 +455,56 @@ def api_set_wordlist():
     return jsonify({"ok": True, "current": p})
 
 
+def analyze_ffuf(path):
+    """Group ffuf.json results by status and size to separate real hits from
+    catch-all/false-positive noise (the majority status or a repeated size)."""
+    from collections import Counter
+    data = json.load(open(path))
+    results = data.get("results", []) or []
+    total = len(results)
+    status_c = Counter(r.get("status") for r in results)
+    size_c = Counter(r.get("length") for r in results)
+
+    # A size that repeats a lot is almost certainly a catch-all/false positive.
+    cutoff = max(3, int(total * 0.02))
+    noise_sizes = {s for s, c in size_c.items() if c > cutoff}
+    # The dominant status is suspect when it's a 2xx that covers most results.
+    dominant = status_c.most_common(1)[0] if status_c else (None, 0)
+    dominant_is_catchall = bool(total) and dominant[1] / total > 0.5 and 200 <= (dominant[0] or 0) < 400
+
+    def fuzz(r):
+        return (r.get("input") or {}).get("FUZZ") or r.get("url", "")
+
+    likely = [r for r in results if r.get("length") not in noise_sizes]
+    likely.sort(key=lambda r: (r.get("status") or 0, r.get("length") or 0))
+
+    return {
+        "total": total,
+        "by_status": [{"code": k, "count": v} for k, v in status_c.most_common()],
+        "by_size": [{"size": k, "count": v} for k, v in size_c.most_common(25)],
+        "noise_sizes": sorted(x for x in noise_sizes if x is not None),
+        "dominant_status": {"code": dominant[0], "count": dominant[1],
+                            "is_catchall": dominant_is_catchall},
+        "likely_count": len(likely),
+        "likely_real": [{"word": fuzz(r), "status": r.get("status"),
+                         "size": r.get("length"), "url": r.get("url")} for r in likely[:300]],
+    }
+
+
+@app.route("/api/analyze")
+def api_analyze():
+    host, _ = bbpipe.parse_target(request.args.get("target", ""))
+    if not host:
+        return jsonify({"error": "no target"}), 400
+    path = os.path.join(cfg.args.output, host, "ffuf.json")
+    if not os.path.exists(path):
+        return jsonify({"error": f"no ffuf.json for {host} yet — run the ffuf step first"}), 404
+    try:
+        return jsonify(analyze_ffuf(path))
+    except Exception as e:
+        return jsonify({"error": f"could not parse ffuf.json: {e}"}), 500
+
+
 @app.route("/api/scope-check")
 def api_scope_check():
     scope = bbpipe.Scope.load(str(cfg.scope_path))

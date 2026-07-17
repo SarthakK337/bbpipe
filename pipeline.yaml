@@ -84,9 +84,9 @@ phases:
       - id: ffuf
         name: "Directory / file brute force (ffuf)"
         tool: ffuf
-        command: "ffuf -u {target_url}/FUZZ -w {wordlist} -mc 200,204,301,302,307,401,403 -t 20 -rate 40 -timeout 10 -o {out}/ffuf.json"
+        command: "ffuf -u {target_url}/FUZZ -w {wordlist} -mc 200,204,301,302,307,401,403 -ac -t 20 -rate 40 -timeout 10 -o {out}/ffuf.json"
         enabled: true
-        info: "Finds hidden paths/files. Throttled (-t 20 -rate 40) to avoid tripping WAF/rate-limits. If you STILL get lots of errors/zeros, lower it: -rate 10 -t 5. If a big target with no protection, raise -rate."
+        info: "Finds hidden paths/files. -ac = auto-calibration (auto-drops the catch-all/false-positive responses). Throttled (-t 20 -rate 40) to avoid WAF/rate-limits — lower to -rate 10 -t 5 if you still get errors. Use the '📊 Analyze' button on the output panel to group results by status/size."
         alternatives:
           - tool: dirsearch
             command: "dirsearch -u {target_url} -t 20 --format=plain -o {out}/dirsearch.txt"

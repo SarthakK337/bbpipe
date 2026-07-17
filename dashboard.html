@@ -43,6 +43,22 @@
   .filelbl{cursor:pointer;background:var(--panel2);border:1px solid var(--border);border-radius:7px;
     padding:7px 11px;font-size:12.5px}
   .filelbl:hover{border-color:var(--accent)}
+  .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;
+    align-items:center;justify-content:center;padding:24px}
+  .modal-box{background:var(--panel);border:1px solid var(--border);border-radius:12px;
+    width:min(920px,96vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
+  .modal-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border)}
+  .modal-body{padding:14px 16px;overflow-y:auto}
+  .agrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:10px 0}
+  @media(max-width:640px){.agrid{grid-template-columns:1fr}}
+  .modal-body h4{margin:14px 0 6px;font-size:.9rem}
+  .modal-body table{border-collapse:collapse;width:100%;font-size:12.5px;display:block;overflow-x:auto}
+  .modal-body th,.modal-body td{border:1px solid var(--border);padding:5px 8px;text-align:left;white-space:nowrap}
+  .modal-body th{background:var(--panel2);position:sticky;top:0}
+  .modal-body td.u{white-space:normal;word-break:break-all;color:var(--muted)}
+  .tag-noise{color:var(--warn);font-size:.72rem;border:1px solid var(--warn);border-radius:10px;padding:0 6px}
+  .tag-real{color:var(--ok);font-size:.72rem;border:1px solid var(--ok);border-radius:10px;padding:0 6px}
+  .realtbl td:first-child{font-weight:600}
   .steps{overflow-y:auto;padding:16px 18px;border-right:1px solid var(--border)}
   .console-wrap{display:flex;flex-direction:column;background:var(--cmd)}
   .phase{margin:6px 0 16px}
@@ -148,6 +164,7 @@
   <div class="console-wrap">
     <div class="toolbar" style="border-bottom:1px solid var(--border)">
       <strong>Live output</strong><span class="sp"></span>
+      <button id="analyzeBtn" class="primary" title="Group ffuf.json by status/size to separate real hits from false positives">📊 Analyze</button>
       <button id="clearBtn">Clear</button>
     </div>
     <div class="console" id="console"></div>
@@ -155,6 +172,13 @@
 </div>
 
 <div class="toast" id="toast"></div>
+
+<div class="modal" id="analyzeModal">
+  <div class="modal-box">
+    <div class="modal-head"><b>📊 ffuf analysis</b><span class="sp"></span><button id="analyzeClose">✕ Close</button></div>
+    <div class="modal-body" id="analyzeBody"></div>
+  </div>
+</div>
 
 <script>
 let CONFIG=null, lastLine=0, poll=null, TOOLS={};
@@ -334,6 +358,38 @@ $('runSelBtn').onclick=()=>{
 };
 $('stopBtn').onclick=async()=>{await api('/api/stop',{method:'POST'});toast('stopping…');};
 $('clearBtn').onclick=()=>{$('console').innerHTML='';};
+
+// ---- ffuf analysis ----
+const esc=s=>String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+$('analyzeBtn').onclick=async()=>{
+  const t=$('target').value.trim();
+  if(!t){toast('enter a target first');return;}
+  const r=await api('/api/analyze?target='+encodeURIComponent(t));
+  if(r.error){toast('⚠ '+r.error);return;}
+  renderAnalysis(r);
+  $('analyzeModal').style.display='flex';
+};
+$('analyzeClose').onclick=()=>{$('analyzeModal').style.display='none';};
+$('analyzeModal').onclick=e=>{if(e.target===$('analyzeModal'))$('analyzeModal').style.display='none';};
+function renderAnalysis(a){
+  const noise=new Set(a.noise_sizes);
+  const dc=a.dominant_status||{};
+  const statusRows=a.by_status.map(s=>
+    `<tr><td>${s.code}</td><td>${s.count}</td><td>${dc.is_catchall&&s.code===dc.code?'<span class="tag-noise">catch-all?</span>':''}</td></tr>`).join('');
+  const sizeRows=a.by_size.map(s=>
+    `<tr><td>${s.size}</td><td>${s.count}</td><td>${noise.has(s.size)?'<span class="tag-noise">noise</span>':'<span class="tag-real">keep</span>'}</td></tr>`).join('');
+  const realRows=a.likely_real.map(r=>
+    `<tr><td>${esc(r.word)}</td><td>${r.status}</td><td>${r.size}</td><td class="u">${esc(r.url)}</td></tr>`).join('');
+  $('analyzeBody').innerHTML=`
+    <p class="info">${a.total} total results.${dc.is_catchall?` <b class="scope-bad">Status ${dc.code} covers ${Math.round(dc.count/a.total*100)}% — looks like a catch-all (false positives).</b>`:''}
+      Sizes repeated more than a few times are flagged as noise.</p>
+    <div class="agrid">
+      <div><h4>By status code</h4><table><tr><th>code</th><th>count</th><th></th></tr>${statusRows}</table></div>
+      <div><h4>By response size (top 25)</h4><table><tr><th>size</th><th>count</th><th></th></tr>${sizeRows}</table></div>
+    </div>
+    <h4>✅ Likely real — ${a.likely_count} result(s) (sizes that don't repeat)</h4>
+    <table class="realtbl"><tr><th>word</th><th>status</th><th>size</th><th>url</th></tr>${realRows||'<tr><td colspan="4">nothing stood out — every result matched a repeated size (all noise)</td></tr>'}</table>`;
+}
 
 // ---- Batch mode (many targets) ----
 function batchTargetList(){
