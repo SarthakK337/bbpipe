@@ -1,0 +1,20 @@
+# Real scope files may contain client / program names — never commit them
+scope.yaml
+
+# Scan output (can be large and sensitive)
+output/
+
+# Dashboard UI edits (per-machine; keeps pipeline.yaml pristine)
+.bbpipe_state.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

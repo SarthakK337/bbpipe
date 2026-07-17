@@ -1,0 +1,2 @@
+PyYAML>=6.0
+Flask>=3.0        # only needed for the dashboard (dashboard.py); the CLI works without it

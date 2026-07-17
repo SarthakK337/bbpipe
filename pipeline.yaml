@@ -1,0 +1,185 @@
+# ============================================================================
+# bbpipe pipeline configuration
+# ----------------------------------------------------------------------------
+# This file defines every step, the tool it uses, and the EXACT command.
+# Edit anything here freely. Placeholders you can use in commands:
+#   {target}      -> example.com
+#   {target_url}  -> https://example.com
+#   {out}         -> output/<target>   (per-target output dir)
+#   {wordlist}    -> the wordlist from --wordlist
+#
+# Per-step keys:
+#   enabled: true|false     -> false = skipped (shown as disabled)
+#   dangerous: true         -> active/aggressive; needs confirmation (or --full-auto)
+#   alternatives: [...]      -> tools you can hot-swap to with the [T] menu
+#   builtin: <name>          -> pure-Python step (no external tool)
+# ============================================================================
+
+phases:
+
+  # --------------------------------------------------------------------------
+  - name: "1. Recon — Subdomain enumeration"
+    steps:
+      - id: subfinder
+        name: "Subdomain enumeration (subfinder)"
+        tool: subfinder
+        command: "subfinder -d {target} -silent -o {out}/subdomains.txt"
+        enabled: true
+        info: "Passive subdomain discovery. Fast and quiet."
+        alternatives:
+          - tool: amass
+            command: "amass enum -passive -d {target} -o {out}/subdomains.txt"
+          - tool: assetfinder
+            command: "assetfinder --subs-only {target} > {out}/subdomains.txt"
+
+      - id: scope_filter
+        name: "Filter discovered hosts to in-scope only (built-in)"
+        tool: builtin
+        builtin: scope_filter
+        params:
+          input: "{out}/subdomains.txt"
+          output: "{out}/subdomains_inscope.txt"
+        enabled: true
+        info: "Drops any discovered host not allowed by scope.yaml. Safety guardrail."
+
+  # --------------------------------------------------------------------------
+  - name: "2. Recon — Live hosts"
+    steps:
+      - id: httpx
+        name: "Probe for live web hosts (httpx)"
+        tool: httpx
+        command: "( cat {out}/subdomains_inscope.txt 2>/dev/null; echo {target} ) | httpx -silent -o {out}/live_hosts.txt"
+        enabled: true
+        info: "Keeps only hosts that actually respond over HTTP/HTTPS. Always includes the primary target."
+        alternatives:
+          - tool: httprobe
+            command: "( cat {out}/subdomains_inscope.txt 2>/dev/null; echo {target} ) | httprobe > {out}/live_hosts.txt"
+
+  # --------------------------------------------------------------------------
+  - name: "3. Recon — Screenshots"
+    steps:
+      - id: gowitness
+        name: "Screenshot every live host (gowitness)"
+        tool: gowitness
+        command: "gowitness scan file -f {out}/live_hosts.txt --screenshot-path {out}/screenshots"
+        enabled: true
+        info: "Visual overview of all hosts. NOTE: gowitness v2 uses 'gowitness file -f ... -P ...' — edit if needed."
+        alternatives:
+          - tool: aquatone
+            command: "cat {out}/live_hosts.txt | aquatone -out {out}/aquatone"
+
+  # --------------------------------------------------------------------------
+  - name: "4. Recon — Tech fingerprint"
+    steps:
+      - id: whatweb
+        name: "Fingerprint tech stack (whatweb)"
+        tool: whatweb
+        command: "whatweb -i {out}/live_hosts.txt --log-brief={out}/whatweb.txt"
+        enabled: true
+        info: "Identifies servers, frameworks, CMS (e.g. spot WordPress -> enable the wpscan step)."
+
+  # --------------------------------------------------------------------------
+  - name: "5. Content discovery"
+    steps:
+      - id: ffuf
+        name: "Directory / file brute force (ffuf)"
+        tool: ffuf
+        command: "ffuf -u {target_url}/FUZZ -w {wordlist} -mc 200,204,301,302,307,401,403 -o {out}/ffuf.json"
+        enabled: true
+        info: "Finds hidden paths/files. Throttle with -rate if the target is small."
+        alternatives:
+          - tool: dirsearch
+            command: "dirsearch -u {target_url} --format=plain -o {out}/dirsearch.txt"
+          - tool: gobuster
+            command: "gobuster dir -u {target_url} -w {wordlist} -o {out}/gobuster.txt"
+          - tool: feroxbuster
+            command: "feroxbuster -u {target_url} -w {wordlist} -o {out}/feroxbuster.txt"
+
+  # --------------------------------------------------------------------------
+  - name: "6. URL & parameter collection"
+    steps:
+      - id: gau
+        name: "Collect known URLs & parameters (gau)"
+        tool: gau
+        command: "gau {target} > {out}/urls.txt"
+        enabled: true
+        info: "Pulls historical URLs (with params) from public sources. Feeds IDOR flagging + injection steps."
+        alternatives:
+          - tool: waybackurls
+            command: "waybackurls {target} > {out}/urls.txt"
+          - tool: katana
+            command: "katana -u {target_url} -o {out}/urls.txt"
+
+      - id: idor_candidates
+        name: "Flag IDOR-candidate URLs (built-in)"
+        tool: builtin
+        builtin: idor_candidates
+        params:
+          input: "{out}/urls.txt"
+          output: "{out}/idor_candidates.txt"
+        enabled: true
+        info: "Regex-flags URLs with object-reference params (id=, user=, order=...). These need MANUAL two-account testing — scanners can't confirm IDOR."
+
+  # --------------------------------------------------------------------------
+  - name: "7. Vulnerability detection (safe)"
+    steps:
+      - id: nuclei
+        name: "Template-based vuln + misconfig scan (nuclei)"
+        tool: nuclei
+        command: "nuclei -l {out}/live_hosts.txt -o {out}/nuclei.txt"
+        enabled: true
+        info: "Known CVEs, exposures (.env, panels), misconfigs. Add -severity low,medium,high,critical to focus."
+
+      - id: nikto
+        name: "Web-server misconfig scan (nikto)"
+        tool: nikto
+        command: "nikto -h {target_url} -o {out}/nikto.txt"
+        enabled: true
+        info: "Classic web-server issues and default files."
+
+  # --------------------------------------------------------------------------
+  - name: "8. WordPress (enable only if a WP site was found)"
+    steps:
+      - id: wpscan
+        name: "WordPress scan (wpscan)"
+        tool: wpscan
+        command: "wpscan --url {target_url} --enumerate u,vp,vt -o {out}/wpscan.txt"
+        enabled: false
+        info: "Enable if whatweb showed WordPress. Add --api-token <KEY> for full vuln data."
+
+  # --------------------------------------------------------------------------
+  - name: "9. Active injection scanners (DANGEROUS — off by default)"
+    steps:
+      - id: sqlmap
+        name: "SQL injection (sqlmap)"
+        tool: sqlmap
+        command: "sqlmap -m {out}/idor_candidates.txt --batch --level=1 --risk=1 --output-dir={out}/sqlmap"
+        enabled: false
+        dangerous: true
+        info: "Aggressive & noisy. Many programs BAN automated scanning — check the rules of engagement first."
+
+      - id: dalfox
+        name: "XSS scan (dalfox)"
+        tool: dalfox
+        command: "dalfox file {out}/urls.txt -o {out}/dalfox.txt"
+        enabled: false
+        dangerous: true
+        info: "Automated XSS discovery across collected URLs."
+
+      - id: commix
+        name: "Command injection (commix)"
+        tool: commix
+        command: "commix --batch -u \"{target_url}/PATH?PARAM=1\""
+        enabled: false
+        dangerous: true
+        info: "EDIT the URL/param first. Very high impact if it hits — and very noisy."
+
+  # --------------------------------------------------------------------------
+  - name: "10. Report"
+    steps:
+      - id: report
+        name: "Summarize results (built-in)"
+        tool: builtin
+        builtin: report
+        enabled: true
+        info: "Writes REPORT.md listing all outputs + manual follow-ups."

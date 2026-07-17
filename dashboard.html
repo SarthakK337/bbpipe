@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bbpipe dashboard</title>
+<style>
+  :root{--bg:#0f1115;--panel:#171a21;--panel2:#1e222b;--text:#e6e8ec;--muted:#9aa3b2;
+    --border:#2a2f3a;--accent:#6ea8fe;--ok:#3fb950;--warn:#f0b429;--danger:#ff6b6b;
+    --run:#4aa3ff;--cmd:#0b0d11}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-size:14px;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{background:var(--panel);border-bottom:1px solid var(--border);padding:12px 20px;
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap;position:sticky;top:0;z-index:10}
+  header h1{font-size:1.05rem;margin:0;color:var(--accent);white-space:nowrap}
+  header .sp{flex:1}
+  input,select,textarea,button{font-family:inherit;font-size:13px}
+  input[type=text]{background:var(--cmd);border:1px solid var(--border);color:var(--text);
+    border-radius:7px;padding:7px 10px;min-width:220px}
+  .scope-ok{color:var(--ok)} .scope-bad{color:var(--danger)}
+  button{cursor:pointer;border:1px solid var(--border);background:var(--panel2);color:var(--text);
+    border-radius:7px;padding:7px 12px;transition:.15s}
+  button:hover{filter:brightness(1.2)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+  button.stop{background:var(--warn);border-color:var(--warn);color:#111;font-weight:600}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .layout{display:grid;grid-template-columns:1fr 1fr;gap:0;height:calc(100vh - 58px)}
+  @media(max-width:900px){.layout{grid-template-columns:1fr;height:auto}}
+  .steps{overflow-y:auto;padding:16px 18px;border-right:1px solid var(--border)}
+  .console-wrap{display:flex;flex-direction:column;background:var(--cmd)}
+  .phase{margin:6px 0 16px}
+  .phase h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+    margin:14px 0 8px;border-bottom:1px solid var(--border);padding-bottom:5px}
+  .step{background:var(--panel);border:1px solid var(--border);border-radius:9px;padding:11px 13px;margin:9px 0}
+  .step.dangerous{border-color:#5c2b2b}
+  .step-head{display:flex;align-items:center;gap:9px}
+  .step-head .name{font-weight:600;flex:1}
+  .badge{font-size:.68rem;padding:1px 7px;border-radius:20px;border:1px solid}
+  .b-danger{color:var(--danger);border-color:var(--danger)}
+  .b-builtin{color:var(--accent);border-color:var(--accent)}
+  .pill{font-size:.68rem;padding:2px 9px;border-radius:20px;font-weight:600}
+  .p-idle{background:var(--panel2);color:var(--muted)}
+  .p-running{background:var(--run);color:#fff}
+  .p-done{background:var(--ok);color:#fff}
+  .p-failed{background:var(--danger);color:#fff}
+  .p-blocked,.p-disabled{background:#3a3320;color:var(--warn)}
+  .p-dry-run{background:#333;color:#ccc}
+  .switch{position:relative;width:38px;height:20px;flex:none}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:var(--border);border-radius:20px;transition:.2s}
+  .slider:before{content:"";position:absolute;height:14px;width:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+  .switch input:checked + .slider{background:var(--ok)}
+  .switch input:checked + .slider:before{transform:translateX(18px)}
+  .step-body{margin-top:9px;display:none}
+  .step.open .step-body{display:block}
+  .row{display:flex;gap:8px;align-items:center;margin:7px 0;flex-wrap:wrap}
+  .info{font-size:.8rem;color:var(--muted)}
+  textarea{width:100%;background:var(--cmd);border:1px solid var(--border);color:#e6e8ec;
+    border-radius:7px;padding:9px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;resize:vertical}
+  select{background:var(--cmd);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:6px 9px}
+  .toolbar{padding:10px 18px;border-bottom:1px solid var(--border);background:var(--panel);
+    display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .toolbar label{display:flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted);cursor:pointer}
+  .console{flex:1;overflow-y:auto;padding:12px 14px;font-family:ui-monospace,Menlo,Consolas,monospace;
+    font-size:12.5px;line-height:1.55;white-space:pre-wrap;word-break:break-word}
+  .console .l-cmd{color:var(--accent)} .console .l-hdr{color:var(--warn);font-weight:600}
+  .console .l-err{color:var(--danger)}
+  .caret{cursor:pointer;color:var(--muted);user-select:none;width:12px}
+  .disabled-step{opacity:.55}
+  .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--ok);color:#fff;
+    padding:9px 18px;border-radius:8px;opacity:0;transition:.25s;pointer-events:none;font-weight:600}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>⛓ bbpipe</h1>
+  <input type="text" id="target" placeholder="target domain, e.g. example.com">
+  <span id="scopeState" class="info"></span>
+  <span class="sp"></span>
+  <button id="reloadBtn" title="Reload pipeline.yaml from disk">↻ Reload config</button>
+  <button id="toolsBtn">Check tools</button>
+</header>
+
+<div class="toolbar">
+  <button class="primary" id="runAllBtn">▶ Run all enabled</button>
+  <button id="runSelBtn">▶ Run selected</button>
+  <button class="stop" id="stopBtn" disabled>■ Stop</button>
+  <label><input type="checkbox" id="dryRun"> Dry-run (show, don't execute)</label>
+  <label><input type="checkbox" id="allowDanger"> <span class="scope-bad">Allow dangerous steps</span></label>
+  <span class="sp"></span>
+  <span id="runState" class="info">idle</span>
+</div>
+
+<div class="layout">
+  <div class="steps" id="steps"></div>
+  <div class="console-wrap">
+    <div class="toolbar" style="border-bottom:1px solid var(--border)">
+      <strong>Live output</strong><span class="sp"></span>
+      <button id="clearBtn">Clear</button>
+    </div>
+    <div class="console" id="console"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let CONFIG=null, lastLine=0, poll=null, TOOLS={};
+const $=id=>document.getElementById(id);
+const toast=t=>{const el=$('toast');el.textContent=t;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),1500);};
+
+async function api(path,opts){const r=await fetch(path,opts);return r.json();}
+
+async function loadConfig(){
+  CONFIG=await api('/api/config');
+  TOOLS=await api('/api/tools');
+  if(CONFIG.target && !$('target').value) $('target').value=CONFIG.target;
+  renderScope();
+  render();
+  checkScope();
+}
+
+function renderScope(){
+  const s=CONFIG.scope;
+  const txt = s.exists ? `scope: ${s.in_scope.length} in / ${s.out_of_scope.length} out (${s.path})`
+                       : `no ${s.path} — all targets allowed (add one!)`;
+  $('scopeState').textContent='';
+}
+
+function statusPill(st){const s=st||'idle';return `<span class="pill p-${s}">${s}</span>`;}
+
+function render(){
+  const c=$('steps');c.innerHTML='';
+  CONFIG.phases.forEach(ph=>{
+    const pd=document.createElement('div');pd.className='phase';
+    pd.innerHTML=`<h2>${ph.name}</h2>`;
+    ph.steps.forEach(st=>pd.appendChild(stepCard(st)));
+    c.appendChild(pd);
+  });
+}
+
+function stepCard(st){
+  const d=document.createElement('div');
+  d.className='step'+(st.dangerous?' dangerous':'')+(st.enabled===false?' disabled-step':'');
+  d.dataset.id=st.id;
+  const builtin=!!st.builtin;
+  const toolBin=(st.tool||'').split(' ')[0];
+  const toolMissing=!builtin && TOOLS[toolBin]===false;
+
+  const alts=[{tool:st.tool,command:st.command||''}].concat(st.alternatives||[]);
+  const opts=alts.map((a,i)=>`<option value="${i}">${a.tool}${TOOLS[a.tool.split(' ')[0]]===false?' (missing)':''}</option>`).join('');
+
+  d.innerHTML=`
+    <div class="step-head">
+      <span class="caret">▸</span>
+      <input type="checkbox" class="sel" title="select for 'Run selected'">
+      <label class="switch"><input type="checkbox" class="en" ${st.enabled!==false?'checked':''}><span class="slider"></span></label>
+      <span class="name">${st.name||st.id}</span>
+      ${st.dangerous?'<span class="badge b-danger">dangerous</span>':''}
+      ${builtin?'<span class="badge b-builtin">built-in</span>':(toolMissing?'<span class="badge b-danger">not installed</span>':'')}
+      <span class="stat">${statusPill('idle')}</span>
+    </div>
+    <div class="step-body">
+      ${st.info?`<div class="info">${st.info}</div>`:''}
+      ${builtin?'':`
+        <div class="row">
+          <span class="info">tool:</span>
+          <select class="tool">${opts}</select>
+          <button class="runOne primary">▶ Run this step</button>
+          <button class="save">Save</button>
+        </div>
+        <textarea class="cmd" rows="2">${(st.command||'').replace(/</g,'&lt;')}</textarea>
+      `}
+      ${builtin?`<div class="row"><button class="runOne primary">▶ Run this step</button></div>`:''}
+    </div>`;
+
+  // expand/collapse
+  const toggle=()=>d.classList.toggle('open');
+  d.querySelector('.caret').onclick=toggle;
+  d.querySelector('.name').onclick=toggle;
+
+  // enable toggle -> persist
+  d.querySelector('.en').onchange=async e=>{
+    await api('/api/step',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:st.id,enabled:e.target.checked})});
+    d.classList.toggle('disabled-step',!e.target.checked);
+    toast('saved');
+  };
+
+  if(!builtin){
+    const cmd=d.querySelector('.cmd'), tool=d.querySelector('.tool');
+    tool.onchange=()=>{cmd.value=alts[tool.value].command;};
+    d.querySelector('.save').onclick=async()=>{
+      await api('/api/step',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({id:st.id,tool:alts[tool.value].tool,command:cmd.value})});
+      toast('command saved');
+    };
+  }
+  d.querySelector('.runOne').onclick=()=>run([st.id]);
+  return d;
+}
+
+async function checkScope(){
+  const t=$('target').value.trim();
+  if(!t){$('scopeState').textContent='';return;}
+  const r=await api('/api/scope-check?target='+encodeURIComponent(t));
+  $('scopeState').innerHTML=r.allowed?'<span class="scope-ok">✓ in scope</span>'
+                                     :'<span class="scope-bad">✗ NOT in scope — will be refused</span>';
+}
+$('target').addEventListener('input',()=>{clearTimeout(window._st);window._st=setTimeout(checkScope,300);});
+
+async function run(stepIds){
+  const target=$('target').value.trim();
+  if(!target){toast('enter a target');return;}
+  const body={target,step_ids:stepIds,dry_run:$('dryRun').checked,allow_dangerous:$('allowDanger').checked};
+  const r=await api('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  if(r.error){toast('⚠ '+r.error);return;}
+  lastLine=0;$('console').innerHTML='';startPolling();
+}
+
+$('runAllBtn').onclick=()=>run(null);
+$('runSelBtn').onclick=()=>{
+  const ids=[...document.querySelectorAll('.sel:checked')].map(c=>c.closest('.step').dataset.id);
+  if(!ids.length){toast('select some steps first');return;}
+  run(ids);
+};
+$('stopBtn').onclick=async()=>{await api('/api/stop',{method:'POST'});toast('stopping…');};
+$('clearBtn').onclick=()=>{$('console').innerHTML='';};
+$('reloadBtn').onclick=async()=>{await api('/api/reload',{method:'POST'});await loadConfig();toast('config reloaded');};
+$('toolsBtn').onclick=async()=>{TOOLS=await api('/api/tools');render();
+  const miss=Object.entries(TOOLS).filter(([k,v])=>!v).map(([k])=>k);
+  toast(miss.length?('missing: '+miss.join(', ')):'all tools installed ✓');};
+
+function startPolling(){
+  if(poll)clearInterval(poll);
+  poll=setInterval(updateStatus,900);updateStatus();
+}
+async function updateStatus(){
+  const s=await api('/api/status?since='+lastLine);
+  const con=$('console');
+  s.lines.forEach(l=>{
+    lastLine=l.i+1;
+    const div=document.createElement('div');
+    div.textContent=l.text;
+    if(l.text.startsWith('$ '))div.className='l-cmd';
+    else if(l.text.startsWith('── '))div.className='l-hdr';
+    else if(/error|refus|fail|blocked/i.test(l.text))div.className='l-err';
+    con.appendChild(div);
+  });
+  if(s.lines.length)con.scrollTop=con.scrollHeight;
+  // update pills
+  document.querySelectorAll('.step').forEach(st=>{
+    const status=s.results[st.dataset.id];
+    if(status)st.querySelector('.stat').innerHTML=statusPill(status);
+  });
+  $('runState').textContent=s.running?('running: '+(s.current||'')):'idle';
+  $('stopBtn').disabled=!s.running;
+  $('runAllBtn').disabled=s.running;$('runSelBtn').disabled=s.running;
+  if(!s.running&&poll){clearInterval(poll);poll=null;}
+}
+
+loadConfig();
+setInterval(()=>{if(!poll)updateStatus();},2000); // keep pills fresh when idle
+</script>
+</body>
+</html>

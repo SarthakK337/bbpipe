@@ -1,0 +1,15 @@
+# Copy this to scope.yaml and edit for each program.
+# bbpipe REFUSES to touch any host not allowed here.
+# Wildcards use shell-glob style: *.example.com matches a.example.com
+#
+#   cp scope.example.yaml scope.yaml
+
+in_scope:
+  - "example.com"
+  - "*.example.com"
+  - "api.example.com"
+
+out_of_scope:
+  - "admin.example.com"      # explicitly excluded even though *.example.com matches
+  - "*.thirdparty.com"       # anything you are NOT authorized to test
+  - "blog.example.com"
